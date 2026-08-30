@@ -1,4 +1,4 @@
-function result = evaluateCoverageAgent(agent,P,scenario,makePlot)
+function result = evaluateCoverageAgent(agent,P,scenario,makePlot,show3D)
 %EVALUATECOVERAGEAGENT Eğitilmiş ajanı keşifsiz çalıştırır ve metrik çıkarır.
 
 arguments
@@ -6,6 +6,7 @@ arguments
     P struct = robotParameters("quick")
     scenario struct = createGardenScenario(P,"demo")
     makePlot (1,1) logical = true
+    show3D (1,1) logical = false
 end
 
 env = createCoverageEnvironment(P,scenario,false);
@@ -43,6 +44,12 @@ if makePlot
     showGardenScenario(scenario,P,result.pathXY);
     title(sprintf("DQN rota | kapsama %.1f%% | ödül %.1f", ...
         100*result.metrics.coverageRatio,result.episodeReward));
+end
+
+if show3D
+    simRes = simulatePathInSimulink(result.pathXY, P, false);
+    result.sim = simRes;
+    result.viewer = animateLawnMower3D(simRes, scenario, P, "chase");
 end
 
 projectRoot = fileparts(fileparts(mfilename("fullpath")));

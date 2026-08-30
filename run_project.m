@@ -27,5 +27,8 @@ else
     warning("Reinforcement Learning Toolbox bulunamadı. Klasik Simulink demosu tamamlandı; RL ortamı atlandı.");
 end
 
-fprintf("\nBaşlangıç tamamlandı. Eğitim için: [agent,stats] = trainCoverageDQN(P);\n");
+fprintf("\nBaşlangıç tamamlandı.\n");
+fprintf(" - 3D Canlı Simülasyonu izlemek için: run_3d_demo\n");
+fprintf(" - RL Ajanını eğitmek için:           [agent,stats] = trainCoverageDQN(P);\n");
+fprintf(" - Canlı simülasyonu başlatmak için:  runLiveSimulation('baseline', P, scenario);\n");
 

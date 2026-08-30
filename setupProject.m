@@ -8,6 +8,7 @@ addpath(fullfile(projectRoot, "models"));
 addpath(fullfile(projectRoot, "planning"));
 addpath(fullfile(projectRoot, "scenarios"));
 addpath(fullfile(projectRoot, "simulation"));
+addpath(fullfile(projectRoot, "visualization"));
 addpath(fullfile(projectRoot, "tests"));
 
 if ~isfolder(fullfile(projectRoot, "results"))

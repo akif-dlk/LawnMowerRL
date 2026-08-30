@@ -40,6 +40,22 @@ if buildSimulinkModel
     buildLawnMowerSimulinkModel(P,false);
 end
 
+% 3D Görselleştirici duman testi
+try
+    viewer = LawnMower3DViewer(scenario, P, "chase");
+    viewer.updatePose(0.5, 0.5, 0.1, 0.4, 0.0, 1.2, 0.99, 1.0);
+    viewer.setCameraMode("topdown");
+    viewer.setCameraMode("orbit");
+    viewer.setCameraMode("cockpit");
+    if isvalid(viewer.Figure)
+        close(viewer.Figure);
+    end
+    results.viewer3DPassed = true;
+catch ME
+    warning("3D Görselleştirici testi uyarısı: %s", ME.message);
+    results.viewer3DPassed = false;
+end
+
 results.passed = true;
 results.baselineMetrics = M;
 results.testedAt = datetime("now");
