@@ -2,11 +2,12 @@ classdef LawnMower3DViewer < handle
     %LAWNMOWER3DVIEWER Otonom çim biçme robotu için 3D ve canlı görselleştirici.
     %
     % Özellikler:
-    %   - 3D Robot Montajı: Gövde, 4 tekerlek, dönen kesici diskler, RTK ve farlar
-    %   - 3D Bahçe ve Engeller: Dinamik çim biçme izi, 3D ağaçlar, çiçeklikler ve çit
+    %   - 3D Robot Montajı: Şasiye paralel 4 tekerlek, dönen kesici diskler, RTK, LiDAR ve LED farlar
+    %   - Engebeli 3D Bahçe ve Yükseklik Haritası: Eğimli tepe/vadiler, dinamik çim biçme şeritleri
+    %   - Gerçekçi 3D Yapılar: Bahçe Evi/Villa, Çiçeklik, Ağaç Korusu, Alet Kulübesi ve Ahşap Çit
+    %   - Araziye Oturan Robot: Z kotu, anlık pitch ve roll açıları ile yokuş eğim adaptasyonu
     %   - Çoklu Kamera: Chase Cam (Takip), Top-Down (Kuşbakışı), Orbit (Serbest 3D), Cockpit (Sensör)
-    %   - Canlı Telemetri ve HUD: Hız, kapsama %, batarya SoC %, güç ve enerji
-    %   - Etkileşimli Kontrol: Oynat, duraklat, hız çarpanı, kamera değiştirme
+    %   - Canlı Telemetri ve HUD: Hız, eğim, kapsama %, batarya SoC %, anlık güç ve enerji
 
     properties
         Figure
@@ -32,7 +33,7 @@ classdef LawnMower3DViewer < handle
         BladeAngle = 0
         WheelAngle = 0
         TrailPoints = zeros(0,3)
-        MaxTrailLength = 500
+        MaxTrailLength = 800
     end
     
     properties (Access = private)
@@ -83,7 +84,7 @@ classdef LawnMower3DViewer < handle
         end
         
         function updatePose(obj, x, y, psi, v, w, energyWh, soc, t)
-            % Robotun anlık konum, yönelim ve telemetri durumunu günceller.
+            % Robotun anlık konum, eğim ve telemetri durumunu günceller.
             arguments
                 obj
                 x (1,1) double
@@ -100,32 +101,37 @@ classdef LawnMower3DViewer < handle
                 return;
             end
             
-            z = obj.P.wheel.radius; % Z yüksekliği
+            % 1. Engebeli arazide zemin yüksekliği ve eğim gradyanı
+            zGround = obj.getTerrainHeight(x, y);
+            [pitchAngle, rollAngle] = obj.getTerrainAngles(x, y, psi);
+            zRobot = zGround + obj.P.wheel.radius * cos(pitchAngle);
             
-            % 1. Robot ana transformasyon matrisini güncelle
-            M = makehgtform('translate', [x, y, z], 'zrotate', psi);
+            % 2. Robot ana transformasyon matrisini güncelle (X, Y, Z, Yaw, Pitch, Roll)
+            M = makehgtform('translate', [x, y, zRobot], ...
+                           'zrotate', psi, ...
+                           'yrotate', pitchAngle, ...
+                           'xrotate', rollAngle);
             set(obj.RobotTransform, 'Matrix', M);
             
-            % 2. Kesici disklerin yüksek hızlı dönüş animasyonu (Biçme aktifken)
+            % 3. Kesici disklerin yüksek hızlı dönüş animasyonu (Biçme aktifken)
             if obj.IsMowing
                 obj.BladeAngle = mod(obj.BladeAngle + 0.45, 2*pi);
                 set(obj.CutterTransform, 'Matrix', makehgtform('zrotate', obj.BladeAngle));
             end
             
-            % 3. Tekerleklerin dönüşü
-            obj.WheelAngle = mod(obj.WheelAngle + (v * 0.1 / obj.P.wheel.radius), 2*pi);
+            % 4. Tekerleklerin şasiye paralel ileri yuvarlanma dönüşü (Y ekseninde)
+            obj.WheelAngle = mod(obj.WheelAngle + (v * 0.1 / max(0.01, obj.P.wheel.radius)), 2*pi);
             for k = 1:numel(obj.WheelTransforms)
                 if isvalid(obj.WheelTransforms(k))
-                    % Tekerlek yerel dönüşü (Y ekseninde)
                     set(obj.WheelTransforms(k), 'Matrix', makehgtform('yrotate', obj.WheelAngle));
                 end
             end
             
-            % 4. Çim biçme izi ve kapsama matrisini güncelle
+            % 5. Çim biçme izi ve kapsama matrisini güncelle
             obj.updateCuttingGrid(x, y);
             
-            % 5. Rota iz çizgisi
-            obj.TrailPoints(end+1,:) = [x, y, z*0.4];
+            % 6. Rota iz çizgisi (arazi yüzeyinin hemen üzerinde)
+            obj.TrailPoints(end+1,:) = [x, y, zGround + 0.04];
             if size(obj.TrailPoints, 1) > obj.MaxTrailLength
                 obj.TrailPoints(1,:) = [];
             end
@@ -133,11 +139,11 @@ classdef LawnMower3DViewer < handle
                               'YData', obj.TrailPoints(:,2), ...
                               'ZData', obj.TrailPoints(:,3));
             
-            % 6. Kamera takibi
-            obj.updateCamera(x, y, z, psi);
+            % 7. Kamera takibi
+            obj.updateCamera(x, y, zRobot, psi, pitchAngle);
             
-            % 7. HUD Telemetri göstergeleri
-            obj.updateHUD(x, y, psi, v, w, energyWh, soc, t);
+            % 8. HUD Telemetri göstergeleri
+            obj.updateHUD(x, y, psi, v, w, pitchAngle, energyWh, soc, t);
         end
         
         function animateTrajectory(obj, time, x, y, psi, v, w, energyWh, soc)
@@ -192,9 +198,9 @@ classdef LawnMower3DViewer < handle
     methods (Access = private)
         function createScene(obj)
             % Pencere ve 3D ekseni hazırlar.
-            obj.Figure = figure("Name", "LawnMowerRL 3D Gerçek Zamanlı Bahçe & Araç İzleyici", ...
+            obj.Figure = figure("Name", "LawnMowerRL 3D Engebeli Bahçe & Araç İzleyici", ...
                 "NumberTitle", "off", "Color", [0.08 0.10 0.12], ...
-                "Position", [100 80 1150 720]);
+                "Position", [80 60 1200 760]);
             
             obj.Axes = axes("Parent", obj.Figure, "Position", [0.02 0.05 0.96 0.90]);
             hold(obj.Axes, "on");
@@ -211,147 +217,215 @@ classdef LawnMower3DViewer < handle
             
             xlim(obj.Axes, [-0.5, obj.Scenario.width + 0.5]);
             ylim(obj.Axes, [-0.5, obj.Scenario.height + 0.5]);
-            zlim(obj.Axes, [-0.1, 2.5]);
+            
+            maxZ = 3.0;
+            if isfield(obj.Scenario, "elevationGrid")
+                maxZ = max(maxZ, max(obj.Scenario.elevationGrid(:)) + 2.5);
+            end
+            zlim(obj.Axes, [-0.2, maxZ]);
             
             % Işıklandırma ve gölgelendirme
             camlight(obj.Axes, "headlight");
-            light(obj.Axes, "Position", [obj.Scenario.width/2, obj.Scenario.height/2, 10], "Style", "local", "Color", [1.0 0.98 0.92]);
+            light(obj.Axes, "Position", [obj.Scenario.width/2, obj.Scenario.height/2, 12], ...
+                "Style", "local", "Color", [1.0 0.98 0.92]);
             lighting(obj.Axes, "gouraud");
             material(obj.Axes, "dull");
             
             % İz çizgisi
             obj.TrailLine = plot3(obj.Axes, NaN, NaN, NaN, "-", ...
-                "Color", [1.0 0.75 0.1 0.7], "LineWidth", 2.5);
+                "Color", [1.0 0.75 0.1 0.75], "LineWidth", 2.5);
         end
         
         function buildGardenEnvironment(obj)
-            % 3D Çim yüzeyi, biçilmemiş/biçilmiş renk dokusu ve engelleri inşa eder.
+            % 3D Engebeli Çim Yüzeyi ve Gerçekçi Nesneleri inşa eder.
             rows = obj.Scenario.rows;
             cols = obj.Scenario.cols;
             
             % Çim hücre matrisi yüzeyi
             [X, Y] = meshgrid(linspace(0, obj.Scenario.width, cols+1), ...
                               linspace(0, obj.Scenario.height, rows+1));
-            Z = zeros(size(X));
+            
+            if isfield(obj.Scenario, "elevationGrid") && ~isempty(obj.Scenario.elevationGrid)
+                Z = obj.Scenario.elevationGrid;
+            else
+                Z = zeros(size(X));
+            end
             
             % Doku renk matrisi (Varsayılan: gür ve koyu çim yeşili)
             C = zeros(rows, cols, 3);
             for r = 1:rows
                 for c = 1:cols
                     if obj.Scenario.obstacleMask(r,c)
-                        C(r,c,:) = [0.25, 0.22, 0.18]; % Engel / Toprak / Taş rengi
+                        C(r,c,:) = [0.28, 0.25, 0.20]; % Engel / Taş / Zemin rengi
                     else
-                        % Çim varyasyonu
                         noise = 0.04 * (rand() - 0.5);
-                        C(r,c,:) = [0.18+noise, 0.58+noise, 0.16+noise];
+                        C(r,c,:) = [0.18+noise, 0.56+noise, 0.15+noise];
                     end
                 end
             end
             
             obj.GrassSurface = surf(obj.Axes, X, Y, Z, C, ...
-                "FaceColor", "flat", "EdgeColor", [0.12 0.35 0.10], "EdgeAlpha", 0.3, ...
-                "AmbientStrength", 0.6, "DiffuseStrength", 0.8);
+                "FaceColor", "flat", "EdgeColor", [0.10 0.32 0.08], "EdgeAlpha", 0.3, ...
+                "AmbientStrength", 0.6, "DiffuseStrength", 0.85);
             
             % 3D Çevre Çiti (Perimeter Fence)
             obj.buildPerimeterFence();
             
-            % 3D Engeller (Ağaçlar, Çiçeklikler, Yapılar)
-            obj.build3DObstacles();
+            % 3D Yapılar ve Engeller (Ev/Villa, Ağaçlar, Çiçeklik, Kulübe)
+            obj.build3DStructures();
         end
         
         function buildPerimeterFence(obj)
-            % Bahçe etrafına şık 3D ahşap çit sütunları ekler.
+            % Bahçe etrafına engebeli araziyi takip eden 3D ahşap çit ekler.
             W = obj.Scenario.width;
             H = obj.Scenario.height;
             fenceHeight = 0.35;
             postSpacing = 1.0;
             
-            % Çit rayları (korkuluklar)
-            railColor = [0.72 0.60 0.45];
-            plot3(obj.Axes, [0 W W 0 0], [0 0 H H 0], [fenceHeight*0.5 fenceHeight*0.5 fenceHeight*0.5 fenceHeight*0.5 fenceHeight*0.5], ...
-                "-", "Color", railColor, "LineWidth", 3);
-            plot3(obj.Axes, [0 W W 0 0], [0 0 H H 0], [fenceHeight*0.9 fenceHeight*0.9 fenceHeight*0.9 fenceHeight*0.9 fenceHeight*0.9], ...
-                "-", "Color", railColor, "LineWidth", 3);
+            railColor = [0.70 0.58 0.42];
             
-            % Direkler (Sütunlar)
+            % Sınır boyunca direkler ve korkuluklar
             for x = 0:postSpacing:W
-                plot3(obj.Axes, [x x], [0 0], [0 fenceHeight], "-", "Color", [0.55 0.42 0.28], "LineWidth", 4);
-                plot3(obj.Axes, [x x], [H H], [0 fenceHeight], "-", "Color", [0.55 0.42 0.28], "LineWidth", 4);
+                z0 = obj.getTerrainHeight(x, 0);
+                zH = obj.getTerrainHeight(x, H);
+                plot3(obj.Axes, [x x], [0 0], [z0 z0+fenceHeight], "-", "Color", [0.52 0.38 0.25], "LineWidth", 3.5);
+                plot3(obj.Axes, [x x], [H H], [zH zH+fenceHeight], "-", "Color", [0.52 0.38 0.25], "LineWidth", 3.5);
             end
             for y = 0:postSpacing:H
-                plot3(obj.Axes, [0 0], [y y], [0 fenceHeight], "-", "Color", [0.55 0.42 0.28], "LineWidth", 4);
-                plot3(obj.Axes, [W W], [y y], [0 fenceHeight], "-", "Color", [0.55 0.42 0.28], "LineWidth", 4);
+                z0 = obj.getTerrainHeight(0, y);
+                zW = obj.getTerrainHeight(W, y);
+                plot3(obj.Axes, [0 0], [y y], [z0 z0+fenceHeight], "-", "Color", [0.52 0.38 0.25], "LineWidth", 3.5);
+                plot3(obj.Axes, [W W], [y y], [zW zW+fenceHeight], "-", "Color", [0.52 0.38 0.25], "LineWidth", 3.5);
             end
         end
         
-        function build3DObstacles(obj)
-            % Senaryodaki engelleri 3D ağaçlar, çiçeklikler veya taş bloklar olarak çizer.
-            switch obj.Scenario.name
-                case "demo"
-                    % Ağaç Adası: Ağaç gövdesi ve yaprak tacı
-                    obj.create3DTree(10 * obj.Scenario.cellSize, 7 * obj.Scenario.cellSize, 0.8, 1.8);
-                    
-                    % Çiçeklik (Çiçek öbeği)
-                    obj.create3DFlowerBed(22.5 * obj.Scenario.cellSize, 14.5 * obj.Scenario.cellSize, 1.6, 1.6);
-                    
-                    % Taş/Kulübe engeli
-                    obj.create3DStoneShed(26 * obj.Scenario.cellSize, 5 * obj.Scenario.cellSize, 1.2, 1.2, 0.7);
-                    
-                otherwise
-                    % Genel engeller için 3D yükseltilmiş bloklar
-                    [obsRows, obsCols] = find(obj.Scenario.obstacleMask);
-                    if numel(obsRows) > 0
-                        step = max(1, round(numel(obsRows) / 12));
-                        for k = 1:step:numel(obsRows)
-                            cx = (obsCols(k) - 0.5) * obj.Scenario.cellSize;
-                            cy = (obsRows(k) - 0.5) * obj.Scenario.cellSize;
-                            obj.create3DStoneShed(cx, cy, obj.Scenario.cellSize*0.9, obj.Scenario.cellSize*0.9, 0.4);
-                        end
-                    end
+        function build3DStructures(obj)
+            % Senaryo yapılarını (Ev, Ağaçlar, Çiçeklik, Kulübe) 3D olarak inşa eder.
+            if ~isfield(obj.Scenario, "structures")
+                return;
             end
+            
+            structs = obj.Scenario.structures;
+            
+            % 1. Bahçe Evi / Villa
+            if isfield(structs, "houses") && ~isempty(structs.houses)
+                for i = 1:size(structs.houses, 1)
+                    h = structs.houses(i,:);
+                    obj.create3DHouse(h(1), h(2), h(3), h(4), h(5));
+                end
+            end
+            
+            % 2. Ağaçlar
+            if isfield(structs, "trees") && ~isempty(structs.trees)
+                for i = 1:size(structs.trees, 1)
+                    t = structs.trees(i,:);
+                    obj.create3DTree(t(1), t(2), t(3), t(4));
+                end
+            end
+            
+            % 3. Çiçeklik
+            if isfield(structs, "flowerbeds") && ~isempty(structs.flowerbeds)
+                for i = 1:size(structs.flowerbeds, 1)
+                    fb = structs.flowerbeds(i,:);
+                    obj.create3DFlowerBed(fb(1), fb(2), fb(3), fb(4));
+                end
+            end
+            
+            % 4. Alet Kulübesi / Taş
+            if isfield(structs, "sheds") && ~isempty(structs.sheds)
+                for i = 1:size(structs.sheds, 1)
+                    s = structs.sheds(i,:);
+                    obj.create3DStoneShed(s(1), s(2), s(3), s(4), s(5));
+                end
+            end
+        end
+        
+        function create3DHouse(obj, xMin, xMax, yMin, yMax, height)
+            % Gerçekçi 3D Bahçe Evi (Duvarlar, Kırmızı Kiremit Çatı, Kapı ve Pencereler)
+            zBase = obj.getTerrainHeight((xMin+xMax)/2, (yMin+yMax)/2);
+            dx = (xMax - xMin);
+            dy = (yMax - yMin);
+            
+            % Ana Duvarlar
+            verts = [
+                xMin yMin zBase; xMax yMin zBase; xMax yMax zBase; xMin yMax zBase; % Alt
+                xMin yMin zBase+height; xMax yMin zBase+height; xMax yMax zBase+height; xMin yMax zBase+height % Üst
+            ];
+            faces = [
+                1 2 3 4; 5 6 7 8; 1 2 6 5; 2 3 7 6; 3 4 8 7; 4 1 5 8
+            ];
+            patch(obj.Axes, 'Vertices', verts, 'Faces', faces, ...
+                'FaceColor', [0.88 0.85 0.78], 'EdgeColor', [0.35 0.32 0.28], 'LineWidth', 1.5);
+            
+            % Kırma Kiremit Çatı (Hip Roof)
+            roofZ = zBase + height;
+            roofPeakZ = roofZ + 0.85;
+            roofPeak = [(xMin+xMax)/2, (yMin+yMax)/2, roofPeakZ];
+            roofVerts = [
+                xMin-0.1 yMin-0.1 roofZ; xMax+0.1 yMin-0.1 roofZ; ...
+                xMax+0.1 yMax+0.1 roofZ; xMin-0.1 yMax+0.1 roofZ; ...
+                roofPeak
+            ];
+            roofFaces = [
+                1 2 5; 2 3 5; 3 4 5; 4 1 5
+            ];
+            patch(obj.Axes, 'Vertices', roofVerts, 'Faces', roofFaces, ...
+                'FaceColor', [0.75 0.24 0.18], 'EdgeColor', [0.45 0.15 0.10], 'LineWidth', 1.2);
+            
+            % Pencereler ve Kapı Detayı
+            plot3(obj.Axes, [xMin+0.3 xMin+0.3], [yMin-0.01 yMin-0.01], [zBase+0.4 zBase+height-0.4], ...
+                "-", "Color", [0.2 0.5 0.8], "LineWidth", 6);
+            plot3(obj.Axes, [xMax-0.3 xMax-0.3], [yMin-0.01 yMin-0.01], [zBase+0.4 zBase+height-0.4], ...
+                "-", "Color", [0.2 0.5 0.8], "LineWidth", 6);
         end
         
         function create3DTree(obj, x, y, trunkR, height)
-            % 3D Silindirik ağaç gövdesi ve küresel yaprak tacı
-            [cz, theta] = meshgrid([0, height*0.45], linspace(0, 2*pi, 16));
+            % 3D Silindirik ağaç gövdesi ve çok katmanlı yaprak tacı
+            zBase = obj.getTerrainHeight(x, y);
+            [cz, theta] = meshgrid([zBase, zBase + height*0.45], linspace(0, 2*pi, 16));
             cx = x + trunkR*0.35 * cos(theta);
             cy = y + trunkR*0.35 * sin(theta);
-            surf(obj.Axes, cx, cy, cz, "FaceColor", [0.42 0.28 0.15], "EdgeColor", "none", "AmbientStrength", 0.4);
+            surf(obj.Axes, cx, cy, cz, "FaceColor", [0.42 0.28 0.15], "EdgeColor", "none");
             
-            % Yaprak tacı (Crown - Yeşillik katmanları)
+            % Yaprak tacı (Crown)
             [sx, sy, sz] = sphere(16);
-            surf(obj.Axes, x + sx*trunkR*1.3, y + sy*trunkR*1.3, height*0.65 + sz*trunkR*0.9, ...
+            surf(obj.Axes, x + sx*trunkR*1.3, y + sy*trunkR*1.3, zBase + height*0.65 + sz*trunkR*0.9, ...
                 "FaceColor", [0.15 0.52 0.12], "EdgeColor", "none", "SpecularStrength", 0.1);
-            surf(obj.Axes, x + sx*trunkR*1.0, y + sy*trunkR*1.0, height*0.88 + sz*trunkR*0.75, ...
+            surf(obj.Axes, x + sx*trunkR*1.0, y + sy*trunkR*1.0, zBase + height*0.88 + sz*trunkR*0.75, ...
                 "FaceColor", [0.22 0.62 0.18], "EdgeColor", "none", "SpecularStrength", 0.1);
         end
         
-        function create3DFlowerBed(obj, x, y, width, height)
+        function create3DFlowerBed(obj, xMin, xMax, yMin, yMax)
             % Renkli çiçek tarhı
-            boxZ = 0.12;
-            patch(obj.Axes, 'XData', [x-width/2 x+width/2 x+width/2 x-width/2], ...
-                            'YData', [y-height/2 y-height/2 y+height/2 y+height/2], ...
+            cx = (xMin + xMax)/2; cy = (yMin + yMax)/2;
+            zBase = obj.getTerrainHeight(cx, cy);
+            boxZ = zBase + 0.12;
+            
+            patch(obj.Axes, 'XData', [xMin xMax xMax xMin], ...
+                            'YData', [yMin yMin yMax yMax], ...
                             'ZData', [boxZ boxZ boxZ boxZ], ...
                             'FaceColor', [0.32 0.20 0.12], 'EdgeColor', [0.55 0.38 0.22], 'LineWidth', 2);
             
             % Çiçek noktaları
             rng(42, "twister");
             colors = [0.95 0.2 0.2; 0.95 0.85 0.1; 0.7 0.2 0.8; 0.95 0.5 0.1];
-            for i = 1:25
-                fx = x + (rand()-0.5)*width*0.8;
-                fy = y + (rand()-0.5)*height*0.8;
+            for i = 1:30
+                fx = xMin + rand()*(xMax - xMin);
+                fy = yMin + rand()*(yMax - yMin);
+                fz = obj.getTerrainHeight(fx, fy) + 0.15;
                 cIdx = randi(size(colors,1));
-                plot3(obj.Axes, fx, fy, boxZ+0.03, "o", "MarkerSize", 6, ...
+                plot3(obj.Axes, fx, fy, fz, "o", "MarkerSize", 6, ...
                     "MarkerFaceColor", colors(cIdx,:), "MarkerEdgeColor", "none");
             end
         end
         
-        function create3DStoneShed(obj, x, y, width, length, height)
-            % 3D Yapı / Taş blok
-            dx = width/2; dy = length/2;
+        function create3DStoneShed(obj, xMin, xMax, yMin, yMax, height)
+            % 3D Alet Kulübesi / Taş blok
+            cx = (xMin + xMax)/2; cy = (yMin + yMax)/2;
+            zBase = obj.getTerrainHeight(cx, cy);
             verts = [
-                x-dx y-dy 0; x+dx y-dy 0; x+dx y+dy 0; x-dx y+dy 0; % Alt
-                x-dx y-dy height; x+dx y-dy height; x+dx y+dy height; x-dx y+dy height % Üst
+                xMin yMin zBase; xMax yMin zBase; xMax yMax zBase; xMin yMax zBase;
+                xMin yMin zBase+height; xMax yMin zBase+height; xMax yMax zBase+height; xMin yMax zBase+height
             ];
             faces = [
                 1 2 3 4; 5 6 7 8; 1 2 6 5; 2 3 7 6; 3 4 8 7; 4 1 5 8
@@ -359,14 +433,14 @@ classdef LawnMower3DViewer < handle
             patch(obj.Axes, 'Vertices', verts, 'Faces', faces, ...
                 'FaceColor', [0.45 0.48 0.50], 'EdgeColor', [0.25 0.28 0.30], 'LineWidth', 1.5);
             
-            % Çatı piramidi
+            % Çatı
+            roofPeak = [cx, cy, zBase + height + 0.35];
             roofVerts = [
-                x-dx y-dy height; x+dx y-dy height; x+dx y+dy height; x-dx y+dy height;
-                x y height+0.25
+                xMin yMin zBase+height; xMax yMin zBase+height; ...
+                xMax yMax zBase+height; xMin yMax zBase+height; ...
+                roofPeak
             ];
-            roofFaces = [
-                1 2 5; 2 3 5; 3 4 5; 4 1 5
-            ];
+            roofFaces = [1 2 5; 2 3 5; 3 4 5; 4 1 5];
             patch(obj.Axes, 'Vertices', roofVerts, 'Faces', roofFaces, ...
                 'FaceColor', [0.65 0.22 0.18], 'EdgeColor', [0.40 0.12 0.10]);
         end
@@ -446,12 +520,12 @@ classdef LawnMower3DViewer < handle
                     'YData', cy + discR*sin(theta), ...
                     'ZData', zeros(size(theta)) - 0.02, ...
                     'FaceColor', [0.95 0.75 0.18], 'EdgeColor', [0.65 0.45 0.05], 'FaceAlpha', 0.85);
-                % Bıçak uçları
                 plot3(obj.CutterTransform, [-0.03-discR, -0.03+discR], [cy, cy], [-0.02, -0.02], ...
                     "-", "Color", [0.9 0.9 0.9], "LineWidth", 3);
             end
             
-            % 7. 4 Adet 3D Dişli Tekerlek
+            % 7. 4 Adet Şasiye Paralel 3D Dişli Tekerlek
+            % Daire X-Z düzleminde, genişlik Y ekseninde uzanır!
             wheelPos = [
                 -wb/2, -tw/2;  % Sol arka
                  wb/2, -tw/2;  % Sol ön
@@ -459,41 +533,54 @@ classdef LawnMower3DViewer < handle
                  wb/2,  tw/2   % Sağ ön
             ];
             
+            thetaWheel = linspace(0, 2*pi, 16);
+            [yMesh, thetaMesh] = meshgrid([-ww/2, ww/2], thetaWheel);
+            xMesh = rw * cos(thetaMesh);
+            zMesh = rw * sin(thetaMesh);
+            
             for k = 1:4
                 wT = hgtransform("Parent", obj.RobotTransform);
                 set(wT, 'Matrix', makehgtform('translate', [wheelPos(k,1), wheelPos(k,2), 0]));
                 
-                % Tekerlek yerel dönüş transformu
+                % Tekerlek yerel dönüş transformu (Y ekseni etrafında)
                 wSpinT = hgtransform("Parent", wT);
                 obj.WheelTransforms(k) = wSpinT;
                 
-                % 3D Silindirik Tekerlek Gövdesi
-                [wy, wz, wx] = cylinder(rw, 14);
-                wx = (wx - 0.5) * ww;
-                surf(wx, wy, wz, "Parent", wSpinT, ...
-                    "FaceColor", [0.10 0.10 0.11], "EdgeColor", [0.25 0.25 0.25], "SpecularStrength", 0.3);
-                % Jant Kapağı
-                patch("Parent", wSpinT, 'XData', [ww/2, ww/2]*1.01, 'YData', [0 0], 'ZData', [0 0], ...
-                    "Marker", "o", "MarkerSize", 5, "MarkerFaceColor", [0.8 0.8 0.8], "MarkerEdgeColor", "none");
+                % Tekerlek yüzeyi (Silindirik lastik sırtı)
+                surf(xMesh, yMesh, zMesh, "Parent", wSpinT, ...
+                    "FaceColor", [0.10 0.10 0.11], "EdgeColor", [0.25 0.25 0.25], ...
+                    "SpecularStrength", 0.3);
+                
+                % Dış ve İç Jant Kapakları (X-Z Dairesel Diskleri)
+                patch("Parent", wSpinT, ...
+                    'XData', rw*cos(thetaWheel), ...
+                    'YData', (ww/2)*ones(size(thetaWheel)), ...
+                    'ZData', rw*sin(thetaWheel), ...
+                    'FaceColor', [0.45 0.45 0.48], 'EdgeColor', [0.2 0.2 0.2]);
+                patch("Parent", wSpinT, ...
+                    'XData', rw*cos(thetaWheel), ...
+                    'YData', (-ww/2)*ones(size(thetaWheel)), ...
+                    'ZData', rw*sin(thetaWheel), ...
+                    'FaceColor', [0.25 0.25 0.28], 'EdgeColor', [0.2 0.2 0.2]);
             end
         end
         
         function buildHUD(obj)
             % Ekran üzeri modern Telemetri / HUD ve Kontrol Paneli.
-            obj.HudPanel = uipanel("Parent", obj.Figure, "Position", [0.02 0.76 0.34 0.22], ...
+            obj.HudPanel = uipanel("Parent", obj.Figure, "Position", [0.02 0.74 0.36 0.24], ...
                 "BackgroundColor", [0.06 0.08 0.10], "ForegroundColor", [0.3 0.6 0.9], ...
                 "BorderType", "line", ...
-                "Title", " LMR-680 CANLI TELEMETRİ ", "FontWeight", "bold", "FontName", "Segoe UI", ...
-                "FontSize", 10);
+                "Title", " LMR-680 CANLI TELEMETRİ & ARAZİ BİLGİSİ ", "FontWeight", "bold", ...
+                "FontName", "Segoe UI", "FontSize", 10);
             
             obj.HudText = uicontrol("Parent", obj.HudPanel, "Style", "text", ...
-                "Units", "normalized", "Position", [0.03 0.05 0.94 0.90], ...
+                "Units", "normalized", "Position", [0.03 0.04 0.94 0.92], ...
                 "HorizontalAlignment", "left", "BackgroundColor", [0.06 0.08 0.10], ...
-                "ForegroundColor", [0.9 0.95 1.0], "FontName", "Consolas", "FontSize", 10, ...
-                "String", sprintf("Hız: 0.00 m/s | Yaw: 0.0°/s\nKapsama: 0.0%% (0.0 m²)\nEnerji: 0.0 Wh | SoC: 100.0%%\nZaman: 0.0 s"));
+                "ForegroundColor", [0.9 0.95 1.0], "FontName", "Consolas", "FontSize", 9.5, ...
+                "String", sprintf("Yükleniyor..."));
             
             % Kontrol Butonları ve Kamera Seçici
-            ctrlPanel = uipanel("Parent", obj.Figure, "Position", [0.66 0.02 0.32 0.06], ...
+            ctrlPanel = uipanel("Parent", obj.Figure, "Position", [0.64 0.02 0.34 0.06], ...
                 "BackgroundColor", [0.08 0.10 0.12], "BorderType", "none");
             
             obj.FigControls.CamPopup = uicontrol("Parent", ctrlPanel, "Style", "popupmenu", ...
@@ -542,12 +629,43 @@ classdef LawnMower3DViewer < handle
             btn.String = sprintf("Hız: %.0fx", obj.PlaybackSpeed);
         end
         
+        function z = getTerrainHeight(obj, x, y)
+            % Anlık (x,y) dünya koordinatındaki arazi yüksekliğini döndürür.
+            if isfield(obj.Scenario, "getElevation") && isa(obj.Scenario.getElevation, "function_handle")
+                try
+                    z = obj.Scenario.getElevation(x, y);
+                    if isnan(z), z = 0; end
+                    return;
+                catch
+                end
+            end
+            z = 0;
+        end
+        
+        function [pitchAngle, rollAngle] = getTerrainAngles(obj, x, y, psi)
+            % Arazi eğim gradyanından robotun gövde pitch ve roll açılarını hesaplar.
+            delta = 0.15;
+            zx1 = obj.getTerrainHeight(x + delta, y);
+            zx0 = obj.getTerrainHeight(x - delta, y);
+            zy1 = obj.getTerrainHeight(x, y + delta);
+            zy0 = obj.getTerrainHeight(x, y - delta);
+            
+            slopeX = (zx1 - zx0) / (2 * delta);
+            slopeY = (zy1 - zy0) / (2 * delta);
+            
+            % Boyuna (pitch) ve enine (roll) eğim
+            longitudinalSlope = slopeX * cos(psi) + slopeY * sin(psi);
+            lateralSlope = -slopeX * sin(psi) + slopeY * cos(psi);
+            
+            pitchAngle = -atan(longitudinalSlope);
+            rollAngle = atan(lateralSlope);
+        end
+        
         function updateCuttingGrid(obj, x, y)
             % Robotun altındaki çim hücresini biçilmiş olarak işaretler ve yüzey rengini açar.
             c = clamp(ceil(x / obj.Scenario.cellSize), 1, obj.Scenario.cols);
             r = clamp(ceil(y / obj.Scenario.cellSize), 1, obj.Scenario.rows);
             
-            % Kesme genişliği içindeki komşu hücreleri de kontrol et
             cutRadius = max(1, round(obj.P.cutting.width / (2*obj.Scenario.cellSize)));
             rRange = max(1, r-cutRadius) : min(obj.Scenario.rows, r+cutRadius);
             cRange = max(1, c-cutRadius) : min(obj.Scenario.cols, c+cutRadius);
@@ -559,9 +677,8 @@ classdef LawnMower3DViewer < handle
                 for ci = cRange
                     if ~obj.Scenario.obstacleMask(ri, ci) && obj.CutGrid(ri, ci) == 0
                         obj.CutGrid(ri, ci) = 1;
-                        % Biçilmiş çim: Açık parlak çim şeridi tonu
                         stripe = mod(ri, 2) * 0.05;
-                        C(ri, ci, :) = [0.48+stripe, 0.80+stripe, 0.28+stripe];
+                        C(ri, ci, :) = [0.48+stripe, 0.82+stripe, 0.28+stripe];
                         changed = true;
                     end
                 end
@@ -572,13 +689,12 @@ classdef LawnMower3DViewer < handle
             end
         end
         
-        function updateCamera(obj, x, y, z, psi)
-            % Seçili kamera moduna göre kamera bakış açısını pürüzsüz ayarlar.
+        function updateCamera(obj, x, y, z, psi, pitch)
+            % Seçili kamera moduna göre kamera bakış açısını ayarlar.
             switch obj.CameraMode
                 case "chase"
-                    % Robotun arkasından takip (Chase Cam)
-                    camDist = 2.4;
-                    camHeight = 1.6;
+                    camDist = 2.6;
+                    camHeight = 1.8;
                     camX = x - camDist * cos(psi);
                     camY = y - camDist * sin(psi);
                     camZ = z + camHeight;
@@ -593,23 +709,21 @@ classdef LawnMower3DViewer < handle
                     camup(obj.Axes, [0 0 1]);
                     
                 case "topdown"
-                    % Kuşbakışı (Top-Down Garden)
                     midX = obj.Scenario.width / 2;
                     midY = obj.Scenario.height / 2;
-                    campos(obj.Axes, [midX, midY, max(obj.Scenario.width, obj.Scenario.height)*1.2]);
+                    campos(obj.Axes, [midX, midY, max(obj.Scenario.width, obj.Scenario.height)*1.3]);
                     camtarget(obj.Axes, [midX, midY, 0]);
                     camva(obj.Axes, 50);
                     camup(obj.Axes, [0 1 0]);
                     
                 case "cockpit"
-                    % Sensör / Ön Tampon Kamerası
                     camX = x + 0.35 * cos(psi);
                     camY = y + 0.35 * sin(psi);
                     camZ = z + 0.25;
                     
                     targetX = x + 3.0 * cos(psi);
                     targetY = y + 3.0 * sin(psi);
-                    targetZ = z;
+                    targetZ = z - sin(pitch)*2.0;
                     
                     campos(obj.Axes, [camX, camY, camZ]);
                     camtarget(obj.Axes, [targetX, targetY, targetZ]);
@@ -617,26 +731,28 @@ classdef LawnMower3DViewer < handle
                     camup(obj.Axes, [0 0 1]);
                     
                 case "orbit"
-                    % Serbest Orbit: Kullanıcı fare kontrolüne izin verilir, sadece hedef odaklanır
                     camtarget(obj.Axes, [x, y, z]);
             end
         end
         
-        function updateHUD(obj, x, y, psi, v, w, energyWh, soc, t)
+        function updateHUD(obj, x, y, psi, v, w, pitchAngle, energyWh, soc, t)
             % HUD telemetri metnini günceller.
             cutCount = nnz(obj.CutGrid & obj.Scenario.freeMask);
             covRatio = 100 * (cutCount / max(1, obj.Scenario.freeCellCount));
             coveredArea = cutCount * (obj.Scenario.cellSize^2);
-            powerW = (obj.P.energy.idlePower + obj.P.cutting.bladePower) + ...
-                     obj.P.energy.linearCoeff*abs(v) + obj.P.energy.yawCoeff*abs(w);
+            slopePct = tan(-pitchAngle) * 100;
             
-            formatStr = ['Pozisyon : X=%.2f m | Y=%.2f m | Heading=%.1f°\n', ...
-                         'Hız      : v=%.2f m/s | yaw rate=%.2f rad/s\n', ...
+            slopePower = max(0, obj.P.body.mass * 9.81 * v * sin(-pitchAngle));
+            powerW = (obj.P.energy.idlePower + obj.P.cutting.bladePower) + ...
+                     obj.P.energy.linearCoeff*abs(v) + obj.P.energy.yawCoeff*abs(w) + slopePower;
+            
+            formatStr = ['Konum    : X=%.2f m | Y=%.2f m | Heading=%.1f°\n', ...
+                         'Hız & Eğim: v=%.2f m/s | w=%.2f rad/s | Eğim=%% %.1f\n', ...
                          'Kapsama  : %%.1f (%.1f m² / %.1f m²)\n', ...
                          'Enerji   : %.1f Wh (Anlık Güç: %.0f W)\n', ...
                          'Batarya  : %%.1f SoC | Sim Süresi: %.1f s'];
             str = sprintf(formatStr, ...
-                          x, y, rad2deg(psi), v, w, covRatio, coveredArea, ...
+                          x, y, rad2deg(psi), v, w, slopePct, covRatio, coveredArea, ...
                           obj.Scenario.freeCellCount*(obj.Scenario.cellSize^2), ...
                           energyWh, powerW, soc*100, t);
             

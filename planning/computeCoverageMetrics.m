@@ -41,7 +41,23 @@ turnTime = quarterTurns * (pi/2) / P.drive.maxYawRate;
 basePower = P.energy.idlePower + P.cutting.bladePower;
 drivePower = basePower + P.energy.linearCoeff * P.drive.nominalMowingSpeed;
 turnPower = basePower + P.energy.yawCoeff * P.drive.maxYawRate;
-energyWh = (drivePower*driveTime + turnPower*turnTime) / 3600;
+flatEnergyWh = (drivePower*driveTime + turnPower*turnTime) / 3600;
+
+% Yokuş/eğim tırmanma enerjisi
+slopeEnergyWh = 0;
+if isfield(scenario, "elevationGrid") && isfield(scenario, "getElevation") && isfield(P, "body")
+    pathXY = cellsToWorld(pathCells, scenario);
+    if size(pathXY, 1) > 1
+        zPath = zeros(size(pathXY,1), 1);
+        for k = 1:size(pathXY,1)
+            zPath(k) = scenario.getElevation(pathXY(k,1), pathXY(k,2));
+        end
+        deltaZ = diff(zPath);
+        climbZ = max(0, deltaZ);
+        slopeEnergyWh = sum(climbZ * P.body.mass * 9.81) / 3600;
+    end
+end
+energyWh = flatEnergyWh + slopeEnergyWh;
 
 metrics.coverageRatio = numel(uniqueCut) / scenario.freeCellCount;
 metrics.coveredArea_m2 = numel(uniqueCut) * scenario.cellSize^2;

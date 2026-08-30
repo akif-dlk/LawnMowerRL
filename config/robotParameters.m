@@ -19,6 +19,7 @@ P.body.height = 0.290;
 P.body.mass = 24.0;
 P.body.wheelbase = 0.420;
 P.body.trackWidth = 0.460;
+P.body.footprintRadius = 0.5 * hypot(P.body.length, P.body.width); % Güvenli çevreleyen yarıçap (~0.43 m)
 P.wheel.radius = 0.110;
 P.wheel.width = 0.060;
 
@@ -29,6 +30,12 @@ P.drive.nominalMowingSpeed = 0.45;
 P.drive.maxYawRate = 0.90;
 P.drive.linearTimeConstant = 0.35;
 P.drive.yawTimeConstant = 0.25;
+
+% Engebeli arazi parametreleri
+P.terrain.enabled = true;
+P.terrain.elevationAmplitude = 0.35; % m (dalgalı tepe/vadi yüksekliği)
+P.terrain.wavelengthX = 7.0;        % m
+P.terrain.wavelengthY = 5.0;        % m
 
 % Biçme sistemi
 P.cutting.width = 0.400;
@@ -45,6 +52,7 @@ P.battery.capacityWh = P.battery.voltage * P.battery.capacityAh;
 P.energy.idlePower = 18.0;
 P.energy.linearCoeff = 115.0;  % W/(m/s)
 P.energy.yawCoeff = 45.0;     % W/(rad/s)
+P.energy.slopeCoeff = P.body.mass * 9.81; % Eğim direnci W/(m/s * sin(theta))
 
 % Simülasyon ve takip
 P.sim.sampleTime = 0.10;
@@ -52,11 +60,11 @@ P.sim.initialPose = [0.2 0.2 0.0];
 P.control.headingGain = 2.4;
 P.control.waypointTolerance = 0.08;
 P.control.slowdownDistance = 0.45;
-P.control.maxCommandSteps = 120000;
+P.control.maxCommandSteps = 150000;
 
-% Kapsama haritası: 30x20 hücre ve 0.4 m hücre = 12x8 m bahçe.
-P.coverage.rows = 20;
-P.coverage.cols = 30;
+% Kapsama haritası: 24x36 hücre ve 0.4 m hücre = 14.4 x 9.6 m bahçe.
+P.coverage.rows = 24;
+P.coverage.cols = 36;
 P.coverage.cellSize = P.cutting.width;
 P.coverage.targetRatio = 0.98;
 
