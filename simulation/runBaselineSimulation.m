@@ -1,10 +1,11 @@
-function result = runBaselineSimulation(P, scenario, makePlots)
+function result = runBaselineSimulation(P, scenario, makePlots, show3D)
 %RUNBASELINESIMULATION Klasik kapsama rotasını Simulink bitki modelinde çalıştırır.
 
 arguments
     P struct = robotParameters()
     scenario struct = createGardenScenario(P,"demo")
     makePlots (1,1) logical = true
+    show3D (1,1) logical = false
 end
 
 setupProject;
@@ -56,6 +57,10 @@ result.metrics.simulatedDuration_s = x.Time(end);
 
 if makePlots
     plotBaselineResult(result,P);
+end
+
+if show3D
+    result.viewer = animateLawnMower3D(result, scenario, P, "chase");
 end
 
 projectRoot = fileparts(fileparts(mfilename("fullpath")));

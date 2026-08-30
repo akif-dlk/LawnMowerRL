@@ -1,7 +1,8 @@
 function report = checkRequirements()
 %CHECKREQUIREMENTS Kurulu MATLAB ürünlerini ve önerilen sürümü kontrol eder.
 
-products = string({ver.Name});
+installedProducts = ver;
+products = string({installedProducts.Name});
 report.MATLAB = any(products == "MATLAB");
 report.Simulink = any(products == "Simulink");
 report.ReinforcementLearning = any(products == "Reinforcement Learning Toolbox");

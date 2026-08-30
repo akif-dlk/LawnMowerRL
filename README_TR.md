@@ -74,6 +74,9 @@ Eğitim çıktıları `results/` içine kaydedilir. `quick` profil kodun ve orta
 
 | Komut | İşlev |
 |---|---|
+| `run_3d_demo` | **3D canlı bahçe ortamında interaktif Simulink sürüşü ve HUD telemetri** |
+| `runLiveSimulation` | Klasik veya DQN rotasını Simulink ile 3D canlı izletir |
+| `animateLawnMower3D` | Herhangi bir simülasyon sonucunu 3D çoklu kamera ile canlandırır |
 | `run_project` | Baştan sona başlangıç demosu |
 | `showMechanicalConcept(robotParameters)` | Üstten mekanik yerleşim |
 | `buildLawnMowerSimulinkModel` | Simulink modelini yeniden üretir |
@@ -83,7 +86,20 @@ Eğitim çıktıları `results/` içine kaydedilir. `quick` profil kodun ve orta
 | `evaluateCoverageAgent` | Ajanın kapsama rotasını ve metriklerini çıkarır |
 | `runRLInSimulink` | Eğitilmiş ajanın rotasını Simulink araç modelinde çalıştırır |
 | `compareCoverageMethods` | RL ile klasik rotayı karşılaştırır |
-| `runSmokeTests` | RL eğitimi yapmadan temel mantık testleri |
+| `runSmokeTests` | RL eğitimi yapmadan temel mantık ve 3D testleri |
+
+## 3D Canlı Görselleştirme ve Kamera Modları
+
+Projede yer alan `LawnMower3DViewer` modülü sayesinde aracın bahçedeki hareketini ve çim kesimini anlık olarak izleyebilirsiniz:
+
+- **3D Robot Modeli:** Aerodinamik kırmızı gövde, 4 adet dönen 3D tekerlek, dönen çift kesici disk tablası, RTK kubbesi, LiDAR/ön sensör ve LED farlar.
+- **3D Bahçe ve Dinamik Çim:** Robot geçtikçe koyu yeşil uzun çim canlı olarak açık yeşil biçilmiş çim şeritlerine dönüşür; 3D ağaçlar, çiçeklikler ve çitler modellenmiştir.
+- **Kamera Modları:**
+  - *Takip (Chase Cam):* Robotun arkasından dinamik takip.
+  - *Kuşbakışı (Top-Down):* Bahçeyi ve kapsama haritasını tepeden izleme.
+  - *Serbest 3D (Orbit):* Fareyle 360° serbest döndürülebilir açı.
+  - *Kokpit (Sensör):* Ön tampon ve sensör bakış açısı.
+- **Canlı Telemetri (HUD):** Hız, açısal hız, anlık kapsama yüzdesi ($\% $), biçilen alan ($m^2$), harcanan enerji ($Wh$), anlık güç ($W$) ve batarya doluluk oranı ($SoC\ \%$).
 
 ## RL formülasyonu
 

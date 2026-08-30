@@ -1,10 +1,12 @@
-function simResult = simulatePathInSimulink(pathXY,P,makePlots)
+function simResult = simulatePathInSimulink(pathXY,P,makePlots,show3D,scenario)
 %SIMULATEPATHINSIMULINK Herhangi bir kapsama yolunu araç modelinde çalıştırır.
 
 arguments
     pathXY (:,2) double
     P struct = robotParameters()
     makePlots (1,1) logical = true
+    show3D (1,1) logical = false
+    scenario struct = struct()
 end
 
 assert(size(pathXY,1) >= 2,"Simülasyon yolu en az iki nokta içermelidir.");
@@ -46,6 +48,13 @@ if makePlots
     yyaxis left; plot(simResult.time,simResult.energy_Wh,"LineWidth",1.2); ylabel("Enerji [Wh]");
     yyaxis right; plot(simResult.time,100*simResult.soc,"LineWidth",1.2); ylabel("SOC [%]");
     grid on; xlabel("t [s]"); title("Enerji modeli");
+end
+
+if show3D
+    if isempty(fieldnames(scenario))
+        scenario = createGardenScenario(P, "demo");
+    end
+    simResult.viewer = animateLawnMower3D(simResult, scenario, P, "chase");
 end
 end
 
